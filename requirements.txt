@@ -1,0 +1,7 @@
+beautifulsoup4
+feedgen  
+mysql-connector-python 
+requests
+schedule
+selenium
+webdriver-manager
