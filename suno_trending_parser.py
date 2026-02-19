@@ -43,6 +43,8 @@ def create_database_and_table():
                 plays INTEGER DEFAULT 0,
                 explicit INTEGER DEFAULT 0,
                 file_path TEXT,
+                styles_preview TEXT,
+                styles_full TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -59,6 +61,8 @@ def create_database_and_table():
             ('plays', 'INTEGER DEFAULT 0'),
             ('explicit', 'INTEGER DEFAULT 0'),
             ('file_path', 'TEXT'),
+            ('styles_preview', 'TEXT'),
+            ('styles_full', 'TEXT'),
             ('created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         ]
 
@@ -137,7 +141,8 @@ def parse_trending(max_tracks=50):
     1. Открывает браузер.
     2. Ждёт ручного входа (номер, SMS).
     3. Переходит на /trending, собирает данные о треках.
-    4. Для каждого нового трека переходит на его страницу и скачивает аудио.
+    4. Для каждого нового трека переходит на его страницу,
+       скачивает аудио и извлекает стили.
     Возвращает список словарей с данными о треках.
     """
     options = webdriver.ChromeOptions()
@@ -234,12 +239,14 @@ def parse_trending(max_tracks=50):
                 'plays': plays,
                 'explicit': explicit,
                 'audio_url': None,
-                'file_path': None
+                'file_path': None,
+                'styles_preview': None,
+                'styles_full': None
             }
             tracks_data.append(track_info)
 
-        # --- ШАГ 4: Переход на страницы треков для скачивания аудио ---
-        print("\n=== ЭТАП 3: Получение и скачивание аудио ===")
+        # --- ШАГ 4: Переход на страницы треков для скачивания аудио и получения стилей ---
+        print("\n=== ЭТАП 3: Получение и скачивание аудио, извлечение стилей ===")
         conn = get_db_connection()
         cursor = conn.cursor()
 
@@ -257,11 +264,43 @@ def parse_trending(max_tracks=50):
 
             try:
                 driver.get(track['track_url'])
-                time.sleep(5)
+                time.sleep(5)  # Ждём загрузки страницы
 
+                # --- Поиск и раскрытие стилей ---
+                try:
+                    # Ищем кнопку "Show full styles" (текст может быть на английском)
+                    show_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Show full styles')]")
+                    # Получаем текст видимых стилей до нажатия
+                    # Предполагаем, что видимые стили находятся в том же контейнере, что и кнопка
+                    # Можно взять родительский элемент и извлечь текст без кнопки
+                    parent = show_button.find_element(By.XPATH, "..")
+                    preview_text = parent.text.replace(show_button.text, '').strip()
+                    track['styles_preview'] = preview_text
+
+                    # Нажимаем кнопку для раскрытия полного списка
+                    show_button.click()
+                    time.sleep(2)  # Ждём появления всех стилей
+
+                    # После раскрытия собираем все стили (например, внутри родительского контейнера)
+                    full_text = parent.text.replace(show_button.text, '').strip()
+                    track['styles_full'] = full_text
+                    print(f"    🏷️ Стили (предпросмотр): {track['styles_preview'][:100]}...")
+                    print(f"    🏷️ Стили (полные): {track['styles_full'][:100]}...")
+
+                except Exception as e:
+                    print(f"    ⚠️ Не удалось найти или раскрыть стили: {e}")
+                    # Возможно, кнопки нет, тогда пробуем просто найти блок со стилями
+                    try:
+                        styles_elem = driver.find_element(By.CSS_SELECTOR, "div[class*='gap-2'][class*='font-sans']")
+                        styles_text = styles_elem.text
+                        track['styles_preview'] = styles_text
+                        track['styles_full'] = styles_text
+                        print(f"    🏷️ Стили (без кнопки): {styles_text[:100]}...")
+                    except:
+                        pass
+
+                # --- Поиск аудио ---
                 audio_soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-                # Поиск реального аудио (сначала в скриптах, потом в теге audio)
                 audio_url = None
 
                 # 1. Ищем в скриптах
@@ -324,12 +363,12 @@ def save_new_tracks(tracks):
             try:
                 cursor.execute(f"""
                     INSERT INTO {TABLE_NAME}
-                    (artist, title, track_url, audio_url, plays, explicit, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (artist, title, track_url, audio_url, plays, explicit, file_path, styles_preview, styles_full)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     track['artist'], track['title'], track['track_url'],
                     track['audio_url'], track['plays'], 1 if track['explicit'] else 0,
-                    track['file_path']
+                    track['file_path'], track['styles_preview'], track['styles_full']
                 ))
                 conn.commit()
                 new_tracks.append(track)
@@ -347,7 +386,7 @@ def save_new_tracks(tracks):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🚀 Suno Trending Parser (SQLite + скачивание)")
+    print("🚀 Suno Trending Parser (SQLite + скачивание + стили)")
     print("=" * 60)
 
     create_database_and_table()
