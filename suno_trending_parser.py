@@ -268,11 +268,9 @@ def parse_trending(max_tracks=50):
 
                 # --- Поиск и раскрытие стилей ---
                 try:
-                    # Ищем кнопку "Show full styles" (текст может быть на английском)
+                    # ИСПРАВЛЕННЫЙ XPATH: правильный синтаксис contains(text(), ...)
                     show_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Show full styles')]")
                     # Получаем текст видимых стилей до нажатия
-                    # Предполагаем, что видимые стили находятся в том же контейнере, что и кнопка
-                    # Можно взять родительский элемент и извлечь текст без кнопки
                     parent = show_button.find_element(By.XPATH, "..")
                     preview_text = parent.text.replace(show_button.text, '').strip()
                     track['styles_preview'] = preview_text
@@ -281,7 +279,7 @@ def parse_trending(max_tracks=50):
                     show_button.click()
                     time.sleep(2)  # Ждём появления всех стилей
 
-                    # После раскрытия собираем все стили (например, внутри родительского контейнера)
+                    # После раскрытия собираем все стили (текст родителя без кнопки)
                     full_text = parent.text.replace(show_button.text, '').strip()
                     track['styles_full'] = full_text
                     print(f"    🏷️ Стили (предпросмотр): {track['styles_preview'][:100]}...")
@@ -296,8 +294,8 @@ def parse_trending(max_tracks=50):
                         track['styles_preview'] = styles_text
                         track['styles_full'] = styles_text
                         print(f"    🏷️ Стили (без кнопки): {styles_text[:100]}...")
-                    except:
-                        pass
+                    except Exception as e2:
+                        print(f"    ⚠️ Не удалось найти стили через CSS: {e2}")
 
                 # --- Поиск аудио ---
                 audio_soup = BeautifulSoup(driver.page_source, 'html.parser')
