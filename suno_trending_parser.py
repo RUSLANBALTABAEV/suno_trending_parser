@@ -32,7 +32,6 @@ def create_database_and_table():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
 
-        # 1. Создаём таблицу, если её нет (минимальная структура)
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +49,6 @@ def create_database_and_table():
         """)
         conn.commit()
 
-        # 2. Проверяем наличие всех нужных колонок и добавляем отсутствующие
         cursor.execute(f"PRAGMA table_info({TABLE_NAME})")
         existing_columns = [col[1] for col in cursor.fetchall()]
         required_columns = [
@@ -82,32 +80,24 @@ def create_database_and_table():
         exit(1)
 
 def get_db_connection():
-    """Возвращает соединение с базой данных SQLite."""
     return sqlite3.connect(DB_FILE)
 
 def track_exists(cursor, track_url):
-    """Проверяет, есть ли трек с таким URL в базе."""
     cursor.execute(f"SELECT id FROM {TABLE_NAME} WHERE track_url = ?", (track_url,))
     return cursor.fetchone() is not None
 
 # ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ ====================
 
 def sanitize_filename(filename):
-    """Удаляет недопустимые для имени файла символы."""
     return re.sub(r'[\\/*?:"<>|]', "", filename).strip()
 
 def download_audio(url, artist, title):
-    """
-    Скачивает аудиофайл по URL.
-    Возвращает путь к сохранённому файлу или None в случае ошибки.
-    """
     if not url:
         return None
 
     filename = sanitize_filename(f"{artist} - {title}.mp3")
     filepath = os.path.join(DOWNLOAD_DIR, filename)
 
-    # Если файл уже существует, не качаем заново
     if os.path.exists(filepath):
         print(f"  ⏩ Файл уже существует: {filepath}")
         return filepath
@@ -118,7 +108,6 @@ def download_audio(url, artist, title):
         r = requests.get(url, stream=True, timeout=45, headers=headers)
         r.raise_for_status()
 
-        # Проверяем Content-Type, чтобы убедиться, что это аудио
         content_type = r.headers.get('Content-Type', '')
         if 'audio' not in content_type and 'octet-stream' not in content_type:
             print(f"  ⚠️ URL ведёт не на аудиофайл ({content_type}), пропускаем.")
@@ -136,17 +125,8 @@ def download_audio(url, artist, title):
 # ==================== ОСНОВНАЯ ФУНКЦИЯ ПАРСИНГА ====================
 
 def parse_trending(max_tracks=50):
-    """
-    Основная функция.
-    1. Открывает браузер.
-    2. Ждёт ручного входа (номер, SMS).
-    3. Переходит на /trending, собирает данные о треках.
-    4. Для каждого нового трека переходит на его страницу,
-       скачивает аудио и извлекает стили.
-    Возвращает список словарей с данными о треках.
-    """
     options = webdriver.ChromeOptions()
-    # options.add_argument('--headless=new')  # Раскомментируйте для работы в фоне
+    # options.add_argument('--headless=new')  # раскомментировать для фонового режима
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
@@ -162,12 +142,12 @@ def parse_trending(max_tracks=50):
         # --- ШАГ 1: Ручной вход ---
         print("\n=== ЭТАП 1: Вход в аккаунт ===")
         driver.get('https://suno.com/sign-in')
-        print("1️⃣ В открывшемся окне браузера введите ваш номер телефона.")
-        print("2️⃣ Нажмите 'Continue' и введите код из SMS, когда он придёт.")
-        print("3️⃣ После успешного входа и появления главной страницы нажмите Enter здесь.")
-        input("⏸️ Ожидание... Нажмите Enter, когда войдёте в аккаунт.")
+        print("1️⃣ Введите номер телефона в браузере")
+        print("2️⃣ Введите код из SMS")
+        print("3️⃣ После входа нажмите Enter здесь")
+        input("⏸️ Ожидание... Нажмите Enter после входа")
 
-        # --- ШАГ 2: Переход на страницу трендов ---
+        # --- ШАГ 2: Парсинг трендов ---
         print("\n=== ЭТАП 2: Парсинг страницы трендов ===")
         trending_url = 'https://suno.com/trending'
         print(f"Загружаем: {trending_url}")
@@ -177,7 +157,6 @@ def parse_trending(max_tracks=50):
             EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="song-row"]'))
         )
 
-        # Скроллим для подгрузки всех треков
         print("Скроллим страницу для загрузки треков...")
         last_height = driver.execute_script("return document.body.scrollHeight")
         for i in range(15):
@@ -190,18 +169,15 @@ def parse_trending(max_tracks=50):
             last_height = new_height
             print(f"  Скролл {i+1}...")
 
-        # Сохраняем HTML для отладки
         debug_file = f"debug_trending_{int(time.time())}.html"
         with open(debug_file, "w", encoding="utf-8") as f:
             f.write(driver.page_source)
-        print(f"📁 Отладочный HTML сохранён: {debug_file}")
+        print(f"📁 Отладочный HTML: {debug_file}")
 
-        # Парсим блоки треков
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         song_blocks = soup.find_all('div', attrs={'data-testid': 'song-row'})
         print(f"Найдено блоков треков: {len(song_blocks)}")
 
-        # --- ШАГ 3: Извлечение данных из каждого блока ---
         for index, block in enumerate(song_blocks[:max_tracks]):
             print(f"\n--- Трек {index+1} ---")
 
@@ -211,9 +187,7 @@ def parse_trending(max_tracks=50):
             author_tag = block.find('a', href=re.compile(r'^/@'))
             artist = author_tag.get_text(strip=True) if author_tag else 'Unknown'
 
-            track_url = None
-            if title_tag and title_tag.has_attr('href'):
-                track_url = urljoin('https://suno.com', title_tag['href'])
+            track_url = urljoin('https://suno.com', title_tag['href']) if title_tag and title_tag.has_attr('href') else None
 
             plays = 0
             plays_tag = block.find('button', attrs={'aria-label': 'Play Count'})
@@ -225,130 +199,119 @@ def parse_trending(max_tracks=50):
                     mult = 1000 if suffix == 'K' else 1000000 if suffix == 'M' else 1
                     plays = int(float(val) * mult)
 
-            explicit = False  # на странице трендов нет, можно не использовать
-
             print(f"  👤 Автор: {artist}")
             print(f"  🎵 Название: {title}")
             print(f"  🔗 Ссылка: {track_url}")
             print(f"  ▶️ Прослушиваний: {plays}")
 
-            track_info = {
+            tracks_data.append({
                 'artist': artist,
                 'title': title,
                 'track_url': track_url,
                 'plays': plays,
-                'explicit': explicit,
+                'explicit': False,
                 'audio_url': None,
                 'file_path': None,
                 'styles_preview': None,
                 'styles_full': None
-            }
-            tracks_data.append(track_info)
+            })
 
-        # --- ШАГ 4: Переход на страницы треков для скачивания аудио и получения стилей ---
-        print("\n=== ЭТАП 3: Получение и скачивание аудио, извлечение стилей ===")
+        # --- ШАП 3: Обработка страниц треков ---
+        print("\n=== ЭТАП 3: Получение аудио и стилей ===")
         conn = get_db_connection()
         cursor = conn.cursor()
 
         for track in tracks_data:
             if not track['track_url']:
-                print("  ⚠️ Пропуск: нет ссылки на трек.")
+                print("  ⚠️ Пропуск: нет ссылки")
                 continue
 
             if track_exists(cursor, track['track_url']):
-                print(f"  ⏩ Трек '{track['title']}' уже есть в базе, пропускаем.")
+                print(f"  ⏩ Уже в базе: {track['title']}")
                 continue
 
             print(f"\n  Обрабатываем: {track['artist']} - {track['title']}")
-            print(f"  Переход на страницу трека: {track['track_url']}")
+            driver.get(track['track_url'])
+            time.sleep(4)  # даём странице загрузиться
 
+            # ─── Поиск стилей (защищённый блок) ───
             try:
-                driver.get(track['track_url'])
-                time.sleep(5)  # Ждём загрузки страницы
+                style_container = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//*[.//a[contains(@href, '/style/')]]")
+                    )
+                )
 
-                # --- Поиск и раскрытие стилей ---
+                style_links = style_container.find_elements(By.XPATH, ".//a[contains(@href, '/style/')]")
+                preview = ', '.join(link.text.strip() for link in style_links if link.text.strip())
+                track['styles_preview'] = preview if preview else None
+
                 try:
-                    # ИСПРАВЛЕННЫЙ XPATH: правильный синтаксис contains(text(), ...)
-                    show_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Show full styles')]")
-                    # Получаем текст видимых стилей до нажатия
-                    parent = show_button.find_element(By.XPATH, "..")
-                    preview_text = parent.text.replace(show_button.text, '').strip()
-                    track['styles_preview'] = preview_text
+                    show_button = style_container.find_element(
+                        By.XPATH,
+                        ".//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show full') or contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'full styles')]"
+                    )
+                    driver.execute_script("arguments[0].click();", show_button)
+                    time.sleep(2)
 
-                    # Нажимаем кнопку для раскрытия полного списка
-                    show_button.click()
-                    time.sleep(2)  # Ждём появления всех стилей
+                    all_style_links = style_container.find_elements(By.XPATH, ".//a[contains(@href, '/style/')]")
+                    full = ', '.join(link.text.strip() for link in all_style_links if link.text.strip())
+                    track['styles_full'] = full if full else preview
+                except:
+                    track['styles_full'] = preview
 
-                    # После раскрытия собираем все стили (текст родителя без кнопки)
-                    full_text = parent.text.replace(show_button.text, '').strip()
-                    track['styles_full'] = full_text
-                    print(f"    🏷️ Стили (предпросмотр): {track['styles_preview'][:100]}...")
-                    print(f"    🏷️ Стили (полные): {track['styles_full'][:100]}...")
+                if track['styles_preview']:
+                    print(f"    🏷️ Стили (preview): {track['styles_preview'][:100]}{'...' if len(track['styles_preview']) > 100 else ''}")
+                if track['styles_full'] and track['styles_full'] != track['styles_preview']:
+                    print(f"    🏷️ Стили (full):   {track['styles_full'][:100]}{'...' if len(track['styles_full']) > 100 else ''}")
 
-                except Exception as e:
-                    print(f"    ⚠️ Не удалось найти или раскрыть стили: {e}")
-                    # Возможно, кнопки нет, тогда пробуем просто найти блок со стилями
-                    try:
-                        styles_elem = driver.find_element(By.CSS_SELECTOR, "div[class*='gap-2'][class*='font-sans']")
-                        styles_text = styles_elem.text
-                        track['styles_preview'] = styles_text
-                        track['styles_full'] = styles_text
-                        print(f"    🏷️ Стили (без кнопки): {styles_text[:100]}...")
-                    except Exception as e2:
-                        print(f"    ⚠️ Не удалось найти стили через CSS: {e2}")
+            except Exception:
+                # Тихо пропускаем — стили просто останутся None
+                pass
 
-                # --- Поиск аудио ---
-                audio_soup = BeautifulSoup(driver.page_source, 'html.parser')
-                audio_url = None
+            # ─── Поиск аудио ───
+            audio_soup = BeautifulSoup(driver.page_source, 'html.parser')
+            audio_url = None
 
-                # 1. Ищем в скриптах
-                scripts = audio_soup.find_all('script')
-                for script in scripts:
-                    if script.string:
-                        urls = re.findall(r'(https?://[^\s\'"<>]+\.(mp3|wav|ogg|m4a|flac))', script.string, re.I)
-                        if urls:
-                            real_url = urls[0][0]
-                            if 'sil-100.mp3' not in real_url:
-                                audio_url = real_url
-                                print(f"    🎧 Найдено в скрипте: {audio_url[:100]}...")
-                                break
+            scripts = audio_soup.find_all('script')
+            for script in scripts:
+                if script.string:
+                    urls = re.findall(r'(https?://[^\s\'"<>]+\.(mp3|wav|ogg|m4a|flac))', script.string, re.I)
+                    if urls:
+                        real_url = urls[0][0]
+                        if 'sil-100.mp3' not in real_url:
+                            audio_url = real_url
+                            break
 
-                # 2. Если не нашли, проверяем audio-тег
-                if not audio_url:
-                    audio_tag = audio_soup.find('audio', src=re.compile(r'\.(mp3|wav|ogg|m4a|flac)$', re.I))
-                    if audio_tag and audio_tag.has_attr('src'):
-                        potential_url = audio_tag['src']
-                        if 'sil-100.mp3' not in potential_url:
-                            audio_url = potential_url
-                            print(f"    🎧 Найден аудио-тег: {audio_url[:100]}...")
-                        else:
-                            print("    ⚠️ Аудио-тег содержит заглушку, пропускаем.")
+            if not audio_url:
+                audio_tag = audio_soup.find('audio', src=re.compile(r'\.(mp3|wav|ogg|m4a|flac)$', re.I))
+                if audio_tag and audio_tag.has_attr('src'):
+                    potential = audio_tag['src']
+                    if 'sil-100.mp3' not in potential:
+                        audio_url = potential
 
-                track['audio_url'] = audio_url
+            track['audio_url'] = audio_url
 
-                if track['audio_url']:
-                    track['file_path'] = download_audio(track['audio_url'], track['artist'], track['title'])
-                else:
-                    print("    ❌ Ссылка на аудио не найдена.")
-
-            except Exception as e:
-                print(f"    ❌ Ошибка при обработке страницы трека: {e}")
+            if audio_url:
+                print(f"    🎧 Аудио: {audio_url[:80]}...")
+                track['file_path'] = download_audio(audio_url, track['artist'], track['title'])
+            else:
+                print("    ❌ Аудио не найдено")
 
         cursor.close()
         conn.close()
 
     except Exception as e:
-        print(f"❌ Критическая ошибка парсинга: {e}")
+        print(f"❌ Критическая ошибка: {e}")
     finally:
         driver.quit()
         print("\n🔚 Браузер закрыт.")
 
     return tracks_data
 
-# ==================== ФУНКЦИЯ СОХРАНЕНИЯ В БД ====================
+# ==================== СОХРАНЕНИЕ В БД ====================
 
 def save_new_tracks(tracks):
-    """Сохраняет только новые треки в базу данных SQLite."""
     if not tracks:
         return []
 
@@ -370,11 +333,11 @@ def save_new_tracks(tracks):
                 ))
                 conn.commit()
                 new_tracks.append(track)
-                print(f"  ✅ Сохранено в БД: {track['artist']} - {track['title']}")
+                print(f"  ✅ Добавлено в БД: {track['artist']} - {track['title']}")
             except sqlite3.IntegrityError:
-                print(f"  ⚠️ Трек {track['track_url']} уже существует (уникальность).")
+                pass
             except Exception as e:
-                print(f"  ❌ Ошибка сохранения в БД для {track['track_url']}: {e}")
+                print(f"  ❌ Ошибка сохранения {track['track_url']}: {e}")
 
     cursor.close()
     conn.close()
@@ -384,17 +347,17 @@ def save_new_tracks(tracks):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🚀 Suno Trending Parser (SQLite + скачивание + стили)")
+    print("🚀 Suno Trending Parser (SQLite + download + styles)")
     print("=" * 60)
 
     create_database_and_table()
     all_tracks = parse_trending(max_tracks=50)
 
     print("\n" + "=" * 60)
-    print("💾 Сохранение новых треков в базу данных...")
-    new_tracks_saved = save_new_tracks(all_tracks)
+    print("💾 Сохранение новых треков...")
+    new_saved = save_new_tracks(all_tracks)
 
     print("\n" + "=" * 60)
-    print(f"📊 Всего обработано треков: {len(all_tracks)}")
-    print(f"✨ Новых треков добавлено в БД: {len(new_tracks_saved)}")
+    print(f"📊 Обработано треков: {len(all_tracks)}")
+    print(f"✨ Новых добавлено: {len(new_saved)}")
     print("=" * 60)
